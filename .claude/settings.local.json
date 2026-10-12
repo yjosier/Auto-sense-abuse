@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Add scapy dependency and read sample Wireshark capture *)"
+    ]
+  }
+}
