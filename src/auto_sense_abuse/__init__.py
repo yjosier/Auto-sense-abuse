@@ -9,6 +9,9 @@ from scapy.all import *
 from scapy.contrib.lldp import *
 from scapy.contrib.isis import *
 
+IFACE = "br-lan"
+MY_MAC = get_if_hwaddr(IFACE)
+
 #a=rdpcap("Wireshark_captures/sha-256-one-side-from-startup.pcapng")
 #p_rcv = PacketList(a)[0]
 
@@ -35,13 +38,9 @@ def derive_ip(input: bytes) -> bytes:
     return new_ip
 
 def derive_autosense(input: bytes) -> bytes:
-    output = input[:3] + os.urandom(6) + input[-8:]
-    return output
+    return input[:3] + os.urandom(6) + input[-8:]
 
-def main():
-    #packet = sniff(ifaces="eth0", filter="ether proto 0x88cc", count=1)
-    packet = sniff(offline="Wireshark_captures/sha-256-one-side-from-startup.pcapng", filter="ether proto 0x88cc", count=1)
-
+def send_lldp(packet: Packet):
     src_mac = packet[0].getlayer(LLDPDUChassisID).id
     src_ip = packet[0].getlayer(LLDPDUManagementAddress).management_address
     src_fa = packet[0].getlayer(LLDPDUGenericOrganisationSpecific, 1)
@@ -91,7 +90,22 @@ def main():
 
     pkt_to_send.show()
     wrpcap(filename="Wireshark_captures/output.pcapng",pkt=pkt_to_send)
+    #sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
 
+
+def main():
+    isis_sniffer = AsyncSniffer(offline="Wireshark_captures/sha-256-toto.pcapng", lfilter=lambda p: p.haslayer(ISIS_CommonHdr) and p.src != MY_MAC, count=1)
+    print(type(isis_sniffer))
+    isis_sniffer.start()
+
+    lldp_sniffer = AsyncSniffer(offline="Wireshark_captures/sha-256-one-side-from-startup.pcapng", filter="ether proto 0x88cc", count=1)
+    lldp_sniffer.start()
+    lldp_sniffer.join(timeout=10)
+    send_lldp(lldp_sniffer.results[0])
+
+    isis_sniffer.join(timeout=10)
+    isis_pkt = isis_sniffer.results[0]
+    isis_pkt.show()
 
 
 if __name__ == "__main__":
