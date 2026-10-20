@@ -14,11 +14,11 @@ import hmac
 
 IFACE = "br-lan"
 MY_MAC = get_if_hwaddr(IFACE)
-OPAD = b"0x5c"
-IPAD = b"0x36"
-APAD = b"0x878FE1F3"
 BLOCK_SIZE = 64 #B, in bytes, 64 for sha-256
 HASH_LEN = 32 #L, in bytes, 32 for sha-256. L is the length of the hash, measured in octets rather than bits.
+OPAD = b"\x5c" * BLOCK_SIZE
+IPAD = b"\x36" * BLOCK_SIZE
+APAD = bytes.fromhex("878FE1F3") * (HASH_LEN // 4)  # to be repeated HASH_LEN/4 times = 8 times
 KEY="toto" 
 # If auth.length = 17 then it's md5 ()
 # If auth.length = 35 then it's sha-256 ()
@@ -58,16 +58,14 @@ def derive_autosense(input: bytes) -> bytes:
 
 # "Ko is always L octets long" so here Ko is alway HASH_LEN octets long. 
 # Take K (the key as a string), returns Ko as hex to the correct size
-def k_to_ko_hex(k: string) -> bytes:
-    if len(k) > 32 :
-        ko_hex = hashlib.sha256(k.encode()).digest().hex()
-    elif (len(k) == 32):
-        ko_hex = k.encode().hex()
-    else:
-        k_hex = k.encode().hex()
-        ko_hex = k_hex.ljust(64, "0") # padd to 32 bytes = 64 hex chars
-    assert len(ko_hex) == 64
-    print(ko_hex)
+def k_to_ko(k: string) -> bytes:
+    kb = k.encode()
+    if len(kb) > HASH_LEN :
+        ko = hashlib.sha256(kb).digest()
+    else :
+        ko = kb.ljust(HASH_LEN, b"\x00")
+    assert len(ko) == HASH_LEN
+    return ko
 
 def send_lldp(packet: Packet):
     src_mac = packet[0].getlayer(LLDPDUChassisID).id
@@ -127,20 +125,40 @@ def send_lldp(packet: Packet):
     wrpcap(filename="Wireshark_captures/output.pcapng",pkt=pkt_to_send)
     #sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
 
-def abuse_isis(packet: Packet):
+
+# First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
+def inner_hash(ko: bytes, isis_apad: bytes) -> bytes:
+    kb = ko.ljust(BLOCK_SIZE, b"\x00")                      # 64 bytes, right-padded
+    k_ipad = bytes(a ^ b for a, b in zip(kb, IPAD))
+    assert len(k_ipad) == BLOCK_SIZE
+    return hashlib.sha256(k_ipad + isis_apad).digest()
+
+#def outer_hash():
+
+
+
+def build_isis(packet: Packet):
     auth = packet[0].getlayer(ISIS_AuthenticationTlv)
-    if auth is not None:
-        print(auth.type)
-        print(auth.len)
-        print(auth.authtype)
-        print(auth.password)
+    ko = k_to_ko("toto")
+    # if auth is not None:
+    #     print(auth.type)
+    #     print(auth.len)
+    #     print(auth.authtype)
+    #     print(auth.password)
     # Step 1 : Get ISIS PDU
     isis_pdu = packet.getlayer(ISIS_CommonHdr)
-    isis_pdu.show()
+    #isis_pdu.show()
+    isis_bytes = isis_pdu.original
+    print(isis_bytes.hex())
     # Step 2 : Remove ISIS authentifcation data. Assume sha2 only for now. Assume no padding for now.
     #isis_pdu_trunc, pad = packet.extract_padding(isis_pdu)
     #isis_pdu_trunc.show()
-    #isis_pdu_trunc = isis_pdu[]
+    isis_bytes_trunc = isis_bytes[:-32]
+    print(isis_bytes_trunc.hex())
+    isis_apad = isis_bytes_trunc + APAD
+    print(isis_apad.hex())
+    # Step 3 : calculate inner hash
+    print(inner_hash(ko, isis_apad).hex())
 
 
 def main():
@@ -160,8 +178,7 @@ def main():
     isis_sniffer.join(timeout=10) # If none is received during 10s, assume error
     isis_pkt = isis_sniffer.results[0]
     #isis_pkt.show()
-    #abuse_isis(isis_pkt)
-    k_to_ko_hex("tototototototototototototototototo")
+    build_isis(isis_pkt)
 
 
 if __name__ == "__main__":
