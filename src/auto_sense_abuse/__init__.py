@@ -156,28 +156,33 @@ def get_hash(key: bytes, isis_apad: bytes) -> bytes:
 
 # Extract received hash and compare with computed hashes from dictionnary list
 def find_key(packet: Packet):
+    #print(packet[0].original.hex())
     t_password = packet[0].getlayer(ISIS_AuthenticationTlv).password
-    t_hash = t_password[2:] # Remove 2 first bytes matchin the keyID in sha-2
-    print(t_hash.hex())
+    t_hash = t_password[2:] # Remove 2 first bytes matching the keyID in sha-2
+    t_key = t_password[:2] # keep original keyID
     f_key = None
 
     # Step 1 : Get ISIS PDU
     isis_pdu = packet.getlayer(ISIS_CommonHdr)
     isis_bytes = isis_pdu.original
-    print(isis_bytes[0])
+    #print(isis_bytes[0])
     # Step 2 : Remove ISIS authentifcation data. 
-    # TODO: Assume sha2 only for now. 
-    # TODO: Assume no padding for now.
+    # TODO: Assume sha2 only for now. Add MD5 and no authentication later.
     #isis_pdu_trunc, pad = packet.extract_padding(isis_pdu)
-    isis_bytes_trunc = isis_bytes[:-32]
+    #isis_bytes_trunc = isis_bytes[:-32]
+
+    assert bytes(packet[ISIS_CommonHdr]) == packet[ISIS_CommonHdr].original
 
     # Step 3 : Concatenate APAD value to previously truncated PDU
-    isis_apad = isis_bytes_trunc + APAD
+    #isis_apad = isis_bytes_trunc + APAD
+    packet[0].getlayer(ISIS_AuthenticationTlv).password = t_key + APAD
+    #print("###########################################################################")
+    #print(raw(packet[0]).hex())
 
-    # Step 4 : For each dict entry, evaluate hash against captured hash
+    # Step 4 : For each dict entry, evaluate hash d_hash, against captured hash t_hash
     with open('dicts/1000000-password-seclists.txt') as my_dict:
         for key in my_dict:
-            d_hash = get_hash(key.rstrip("\n"), isis_apad)
+            d_hash = get_hash(key.rstrip("\n"), bytes(packet[ISIS_CommonHdr]))
             if t_hash.hex() == d_hash.hex():
                 f_key = key;
                 break;
