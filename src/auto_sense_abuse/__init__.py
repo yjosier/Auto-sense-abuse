@@ -57,18 +57,6 @@ def derive_ip(input: bytes) -> bytes:
 def derive_autosense(input: bytes) -> bytes:
     return input[:3] + os.urandom(6) + input[-8:]
 
-# Compute Ko from K
-def k_to_ko(k: string) -> bytes:
-    # "Ko is always L octets long" so here Ko is alway HASH_LEN octets long. 
-    # Take K (the key as a string), returns Ko as hex to the correct size
-    kb = k.encode()
-    if len(kb) > HASH_LEN :
-        ko = hashlib.sha256(kb).digest()
-    else :
-        ko = kb.ljust(HASH_LEN, b"\x00")
-    assert len(ko) == HASH_LEN
-    return ko
-
 # Derive received LLDP packet and send it back
 def send_lldp(packet: Packet):
     src_mac = packet[0].getlayer(LLDPDUChassisID).id
@@ -139,26 +127,14 @@ def send_isis(packet: Packet):
     wrpcap(filename="Wireshark_captures/output_isis.pcapng",pkt=isis_to_send)
     return
 
-# First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
-def get_inner_hash(ko: bytes, isis_apad: bytes) -> bytes:
-    kb = ko.ljust(BLOCK_SIZE, b"\x00")                      # 64 bytes, right-padded
-    k_ipad = bytes(a ^ b for a, b in zip(kb, IPAD))
-    assert len(k_ipad) == BLOCK_SIZE
-    return hashlib.sha256(k_ipad + isis_apad).digest()
-
-# Second-Hash = H(Ko XOR Opad || First-Hash)
-def get_outer_hash(ko: bytes, inner_hash: bytes) -> bytes:
-    kb = ko.ljust(BLOCK_SIZE, b"\x00")                      # 64 bytes, right-padded
-    k_opad = bytes(a ^ b for a, b in zip(kb, OPAD))
-    assert len(k_opad) == BLOCK_SIZE
-    return hashlib.sha256(k_opad + inner_hash).digest()
-
 # Compute Ko, First-Hash and Second-Hash
+# "Ko is always L octets long" so here Ko is alway HASH_LEN octets long.
+# First-Hash = H(Ko XOR Ipad || (IS-IS PDU))
+# Second-Hash = H(Ko XOR Opad || First-Hash)
 def get_hash(key: bytes, isis_apad: bytes) -> bytes:
-    ko = k_to_ko(key)
-    inner_hash = get_inner_hash(ko, isis_apad)
-    outer_hash = get_outer_hash(ko, inner_hash)
-    return outer_hash
+    if len(key) > HASH_LEN:
+        key = sha256(key).digest()
+    return hmac.new(key, isis_apad, sha256).digest()
 
 # Extract received hash and compare with computed hashes from dictionnary list
 def find_key(packet: Packet):
@@ -186,14 +162,15 @@ def find_key(packet: Packet):
     #print(raw(packet[0]).hex())
 
     # Step 4 : For each dict entry, evaluate hash d_hash, against captured hash t_hash
-    with open('dicts/1000000-password-seclists.txt') as my_dict:
+    computed_packet = bytes(packet[ISIS_CommonHdr])
+    with open('dicts/1000000-password-seclists.txt', 'rb') as my_dict:
         for key in my_dict:
-            d_hash = get_hash(key.rstrip("\n"), bytes(packet[ISIS_CommonHdr]))
-            if t_hash.hex() == d_hash.hex():
+            d_hash = get_hash(key.rstrip(b"\n"), computed_packet)
+            if t_hash == d_hash:
                 f_key = key;
                 break;
     if f_key:
-        print("Key found: ", f_key)
+        print("Key found: ", f_key.decode())
         return f_key
     else:
         print("Key not found, try another dictionnary.")
