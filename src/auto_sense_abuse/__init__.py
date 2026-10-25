@@ -184,7 +184,7 @@ def main():
 
     # keep only LLDP and ISIS; ignore our own frame; stop as soon as ISIS is caught.
     sniff(
-        offline="Wireshark_captures/ISIS-89139121961zyf.pcapng",
+        iface=iface,
         lfilter=lambda p: p.src != i_mac
             and (p.haslayer(LLDPDU) or p.haslayer(ISIS_CommonHdr)),
         prn=handle,
