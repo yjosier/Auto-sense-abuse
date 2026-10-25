@@ -1,13 +1,16 @@
 [project]
 name = "auto-sense-abuse"
 version = "0.1.0"
-description = ""
+description = "Impersonate a switch over LLDP to trigger an IS-IS Hello and brute-force its HMAC-SHA256 authentication key."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["scapy"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[project.scripts]
+auto-sense-abuse = "auto_sense_abuse:main"
 
 [build-system]
 requires = ["setuptools>=61"]
