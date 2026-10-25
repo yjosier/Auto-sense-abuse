@@ -72,12 +72,12 @@ def send_lldp(packet: Packet, iface):
     #packet[0].getlayer(LLDPDUManagementAddress).show()
     #print(packet[0].getlayer(LLDPDUChassisID).id)
     
-    # Derive target MAC address' 5th byte. Keep MAC vendor intact, and last byte to 00.
+    # Derive target MAC address' 5th byte. Keep MAC vendor intact
     new_mac = derive_mac(src_mac)
     # Derive target IP address' 4th byte.
     new_ip = derive_ip(src_ip)
     # Derive target Fabric Attach payload with new MAC address
-    new_fa = src_fa.data[:-10] + mac2str(new_mac) + bytearray(b'\x00\x00\x00\xc0')
+    new_fa = src_fa.data[:-10] + mac2str(new_mac) + bytearray(b'\x00\x00\x00\xc8')
     # Derive target Auto-sense payload with new systemid.
     new_autosense = derive_autosense(src_autosense.data)
 
@@ -87,7 +87,7 @@ def send_lldp(packet: Packet, iface):
     # print(new_fa)
     #print(socket.inet_ntoa(new_ip))
     pkt_to_send=packet[0]
-    pkt_to_send[Ether].src = new_mac
+    pkt_to_send[Ether].src = new_mac[:-2] + "08" # Force non-base MAC address in the ether field only
     pkt_to_send[LLDPDUChassisID].id = new_mac
     pkt_to_send[LLDPDUManagementAddress].management_address = new_ip
 
