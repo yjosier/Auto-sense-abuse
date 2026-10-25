@@ -45,7 +45,7 @@ def derive_autosense(input: bytes) -> bytes:
     return input[:3] + os.urandom(6) + input[-8:]
 
 # Derive received LLDP packet and send it back
-def send_lldp(packet: Packet):
+def send_lldp(packet: Packet, iface):
     src_mac = packet[0].getlayer(LLDPDUChassisID).id
     src_ip = packet[0].getlayer(LLDPDUManagementAddress).management_address
     src_fa = packet[0].getlayer(LLDPDUGenericOrganisationSpecific, 1)
@@ -107,7 +107,7 @@ def send_lldp(packet: Packet):
     #pkt_to_send.show()
     # TODO : Check packet conformity before sending ?
     #wrpcap(filename="Wireshark_captures/output_lldp.pcapng",pkt=pkt_to_send)
-    sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
+    sendp(pkt_to_send, iface=iface, count=10, inter=1)
 
 # Compute Ko, First-Hash and Second-Hash
 def get_hash(key: bytes, isis_apad: bytes) -> bytes:
@@ -177,7 +177,7 @@ def main():
         # Keep received state in state to only trigger the send_lldp() once
         if pkt.haslayer(LLDPDU) and not state.get("lldp_sent"):
             state["lldp_sent"] = True
-            send_lldp(pkt)
+            send_lldp(pkt, iface)
         # ISIS Hello back from the target
         elif pkt.haslayer(ISIS_CommonHdr):
             state["isis"] = pkt
