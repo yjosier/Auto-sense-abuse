@@ -5,15 +5,22 @@ import subprocess
 import sys
 import random
 import socket
+import hmac
 from scapy.all import *
 from scapy.contrib.lldp import *
 from scapy.contrib.isis import *
 from hashlib import sha256
 from hashlib import md5
-import hmac
 
-#IFACE = "br-lan"
-#MY_MAC = get_if_hwaddr(IFACE)
+
+# TODO : Script the interface handover based on the user argv
+# sudo setcap cap_net_raw,cap_net_admin+eip $(readlink -f .venv/bin/python)
+# sudo nmcli dev set enp0s31f6 managed no
+# sudo ip addr flush dev enp0s31f6
+# sudo sysctl -w net.ipv6.conf.enp0s31f6.disable_ipv6=1
+# sudo ip link set enp0s31f6 up
+# sudo systemctl stop lldpd avahi-daemon 2>/dev/null
+
 BLOCK_SIZE = 64 #B, in bytes, 64 for sha-256
 HASH_LEN = 32 #L, in bytes, 32 for sha-256. L is the length of the hash, measured in octets rather than bits.
 OPAD = b"\x5c" * BLOCK_SIZE
