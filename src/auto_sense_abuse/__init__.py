@@ -119,7 +119,7 @@ def get_hash(key: bytes, isis_apad: bytes) -> bytes:
     return hmac.new(key, isis_apad, sha256).digest()
 
 # Extract received hash and compare with computed hashes from dictionnary list
-def find_isis_key(packet: Packet):
+def find_isis_key(packet: Packet, dict_param):
     #print(packet[0].original.hex())
     t_password = packet[0].getlayer(ISIS_AuthenticationTlv).password
     t_hash = t_password[2:] # Remove 2 first bytes matching the keyID in sha-2
@@ -145,7 +145,7 @@ def find_isis_key(packet: Packet):
 
     # Step 4 : For each dict entry, evaluate hash d_hash, against captured hash t_hash
     computed_packet = bytes(packet[ISIS_CommonHdr])
-    with open('dicts/1000000-password-seclists.txt', 'rb') as my_dict:
+    with open(dict_param, 'rb') as my_dict:
         for key in my_dict:
             d_hash = get_hash(key.rstrip(b"\n"), computed_packet)
             if t_hash == d_hash:
