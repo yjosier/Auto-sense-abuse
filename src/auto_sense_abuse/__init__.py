@@ -106,8 +106,8 @@ def send_lldp(packet: Packet):
 
     #pkt_to_send.show()
     # TODO : Check packet conformity before sending ?
-    wrpcap(filename="Wireshark_captures/output_lldp.pcapng",pkt=pkt_to_send)
-    #sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
+    #wrpcap(filename="Wireshark_captures/output_lldp.pcapng",pkt=pkt_to_send)
+    sendp(pkt_to_send, iface=IFACE, count=10, inter=1)
 
 # Compute Ko, First-Hash and Second-Hash
 def get_hash(key: bytes, isis_apad: bytes) -> bytes:
@@ -189,7 +189,7 @@ def main():
             and (p.haslayer(LLDPDU) or p.haslayer(ISIS_CommonHdr)),
         prn=handle,
         stop_filter=lambda p: "isis" in state,
-        timeout=10,  # timeout if no ISIS Hello is received within 10s
+        timeout=30,  # timeout if no LLDP/ISIS Hello is received within 30s (Maximum LLDP timer)
     )
 
     if "isis" not in state:
