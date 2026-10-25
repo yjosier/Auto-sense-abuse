@@ -42,7 +42,7 @@ def derive_ip(input: bytes) -> bytes:
 
 # Derive systemid field
 def derive_autosense(input: bytes) -> bytes:
-    return input[:3] + os.urandom(6) + input[-8:]
+    return input[:3] + os.urandom(6) + input[-10:]
 
 # Derive received LLDP packet and send it back
 def send_lldp(packet: Packet, iface):
